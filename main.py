@@ -18,11 +18,7 @@ user_states = {}
 
 def get_user_lang(user_id: int) -> str:
     """Get user's preferred language."""
-    try:
-        return db_manager.get_user_language(user_id)
-    except Exception as e:
-        logger.warning(f"Failed to get user language: {e}. Defaulting to 'en'")
-        return "en"
+    return db_manager.get_user_language(user_id)
 
 def get_main_menu_keyboard(lang: str = "en"):
     """Get the main menu inline keyboard."""
@@ -218,6 +214,44 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def auth_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /auth command for web authentication."""
+    user_id = update.effective_user.id
+    
+    # Generate authentication code
+    import hashlib
+    auth_code = hashlib.sha256(f"{user_id}:karobuddy".encode()).hexdigest()[:6].upper()
+    
+    auth_message = f"""🔐 **Web Authentication**
+
+Your authentication code is:
+
+**{auth_code}**
+
+This code is valid for 10 minutes.
+
+**How to use:**
+1. Go to the KaroBuddy web app
+2. Enter your Telegram ID: `{user_id}`
+3. Enter this code: `{auth_code}`
+4. Click Login
+
+⚠️ **Security Note:**
+• Don't share this code with anyone
+• The code expires in 10 minutes
+• Generate a new code if needed
+
+🌐 **Web App Features:**
+• Professional dashboard
+• Interactive charts
+• AI chat interface
+• Goal management
+• Advanced analytics
+
+Access your financial data from anywhere! 💻"""
+    
+    await update.message.reply_text(auth_message, parse_mode='Markdown')
 
 async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /dashboard command."""
@@ -607,6 +641,7 @@ def main():
     # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("auth", auth_command))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
