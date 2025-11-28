@@ -267,7 +267,7 @@ def login_page():
             st.markdown("#### Verification Steps:")
             st.markdown("""
             1. Open your Telegram app
-            2. Send `/auth` to @KaroBuddyBot
+            2. Send `/auth` to @KaroBuddy_bot
             3. Copy the 6-digit code you receive
             4. Enter it below
             """)
@@ -291,7 +291,7 @@ def login_page():
         
         st.markdown("---")
         st.markdown("### 📱 Don't have an account?")
-        st.markdown("1. Open Telegram and search for **@KaroBuddyBot**")
+        st.markdown("1. Open Telegram and search for **@KaroBuddy_bot**")
         st.markdown("2. Send `/start` to create your account")
         st.markdown("3. Come back here to login")
 
@@ -516,114 +516,139 @@ def goals_page():
         if st.button("Create Goal"):
             if goal_name and target_amount:
                 c = db_conn.cursor()
-                c.execute("""INSERT INTO goals (telegram_id, goal_name, target_amount, 
-                             current_amount, deadline, status, created_at)
-                             VALUES (?, ?, ?, 0, ?, 'active', ?)""",
-                          (st.session_state.telegram_id, goal_name, target_amount,
-                           deadline.isoformat(), datetime.now().isoformat()))
-                db_conn.commit()
-                st.success(f"✅ Goal '{goal_name}' created successfully!")
-                st.rerun()
+                # Check if goal already exists for this user
+                c.execute("SELECT id FROM goals WHERE telegram_id=? AND goal_name=?", 
+                         (st.session_state.telegram_id, goal_name))
+                existing = c.fetchone()
+                
+                if existing:
+                    st.error(f"⚠️ Goal '{goal_name}' already exists!")
+                else:
+                    c.execute("""INSERT INTO goals (telegram_id, goal_name, target_amount, 
+                                 current_amount, deadline, status, created_at)
+                                 VALUES (?, ?, ?, 0, ?, 'active', ?)""",
+                             (st.session_state.telegram_id, goal_name, target_amount,
+                              deadline.isoformat(), datetime.now().isoformat()))
+                    db_conn.commit()
+                    st.success(f"✅ Goal '{goal_name}' created successfully!")
+                    st.rerun()
     
     st.markdown("---")
     
-    # Display goals
+    # Display and manage goals
+    st.markdown("### 🎯 Your Financial Goals")
+    
     if data['goals']:
         for idx, goal in enumerate(data['goals']):
-            name, target, current, deadline, status = goal
+            # Unpack goal data safely
+            if isinstance(goal, (list, tuple)) and len(goal) >= 5:
+                name, target, current, deadline, status = goal[:5]
+            elif isinstance(goal, dict):
+                name = goal.get('name', 'Unknown')
+                target = goal.get('target', 0)
+                current = goal.get('current', 0)
+                deadline = goal.get('deadline', 'N/A')
+                status = goal.get('status', 'active')
+            else:
+                continue
+                
             progress = (current / target * 100) if target > 0 else 0
             
             with st.container():
                 col1, col2, col3 = st.columns([3, 1, 1])
                 
                 with col1:
-                    st.markdown(f"### {name}")
-                    progress = min(progress / 100, 1.0)  # Clamp to [0.0, 1.0]
-                    st.progress(progress)
+                    st.markdown(f"#### {name}")
+                    progress_display = min(progress / 100, 1.0)  # Clamp to [0.0, 1.0]
+                    st.progress(progress_display)
                     st.caption(f"₹{current:,.0f} / ₹{target:,.0f} ({progress:.1f}%)")
                 
                 with col2:
-                    st.metric("Remaining", f"₹{target - current:,.0f}")
+                    st.metric("Remaining", f"₹{max(target - current, 0):,.0f}")
                     st.caption(f"Deadline: {deadline}")
                 
                 with col3:
-                    # Create a unique key using both the goal name and its index
-                    goal_key = f"allocate_{name}_{idx}"
+                    # Create a stable unique key using goal name, index, and user ID
+                    goal_key = f"allocate_{st.session_state.telegram_id}_{name}_{idx}"
                     
                     # Initialize allocation amount in session state if not exists
-                    if goal_key not in st.session_state:
-                        st.session_state[goal_key] = 0
+                    if f"{goal_key}_value" not in st.session_state:
+                        st.session_state[f"{goal_key}_value"] = 0
                     
                     # Use a callback to handle the allocation
-                    def update_allocation(goal_name=name, goal_idx=idx):
-                        amount_key = f"allocate_{goal_name}_{goal_idx}"
-                        if amount_key in st.session_state:
-                            allocate_amount = st.session_state[amount_key]
+                    def update_allocation():
+                        # Get the value directly from the input widget
+                        input_key = f"{goal_key}_input"
+                        if input_key in st.session_state:
+                            allocate_amount = st.session_state[input_key]
                             if allocate_amount > 0:
                                 with st.spinner(f'Processing allocation of ₹{allocate_amount:,.0f}...'):
-                                    c = db_conn.cursor()
-                                    new_amount = current + allocate_amount
-                                    c.execute("UPDATE goals SET current_amount=? WHERE telegram_id=? AND goal_name=?",
-                                            (new_amount, st.session_state.telegram_id, goal_name))
-                                    c.execute("""INSERT INTO transactions (telegram_id, amount, type, category, description, date)
-                                                VALUES (?, ?, 'goal_allocation', ?, ?, ?)""",
-                                            (st.session_state.telegram_id, allocate_amount, goal_name,
-                                             f"Allocated to {goal_name}", datetime.now().date().isoformat()))
-                                    db_conn.commit()
-                                    st.session_state[amount_key] = 0
-                                    st.rerun()
+                                    try:
+                                        c = db_conn.cursor()
+                                        # Get current amount
+                                        c.execute("""
+                                            SELECT current_amount, id FROM goals 
+                                            WHERE telegram_id=? AND goal_name=?
+                                            LIMIT 1
+                                        """, (st.session_state.telegram_id, name))
+                                        result = c.fetchone()
+                                        
+                                        if not result:
+                                            st.error("Goal not found!")
+                                            return
+                                            
+                                        current_amount, goal_id = result
+                                        new_amount = current_amount + allocate_amount
+                                        
+                                        # Update goal with proper error handling
+                                        c.execute("""
+                                            UPDATE goals 
+                                            SET current_amount=?
+                                            WHERE id=? AND telegram_id=?
+                                        """, (new_amount, goal_id, st.session_state.telegram_id))
+                                        
+                                        if c.rowcount == 0:
+                                            raise Exception("Failed to update goal")
+                                        
+                                        # Record transaction with proper transaction handling
+                                        c.execute("""
+                                            INSERT INTO transactions 
+                                            (telegram_id, amount, type, category, description, date)
+                                            VALUES (?, ?, 'goal_allocation', ?, ?, ?)
+                                        """, (
+                                            st.session_state.telegram_id, 
+                                            allocate_amount, 
+                                            'Savings',
+                                            f"Allocated to {name}", 
+                                            datetime.now().date().isoformat()
+                                        ))
+                                        
+                                        db_conn.commit()
+                                        # Reset the input value
+                                        st.session_state[input_key] = 0
+                                        st.success(f"Successfully allocated ₹{allocate_amount:,.0f} to {name}!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error updating goal: {str(e)}")
+                                        db_conn.rollback()
                     
-                    # Create the number input with on_change callback
+                    # Create the number input with proper key and callback
                     allocate_amount = st.number_input(
-                        "Allocate",
+                        "Allocate Amount (₹)",
                         min_value=0,
                         step=100,
-                        key=goal_key,
-                        on_change=update_allocation,
-                        args=(name, idx)
+                        key=f"{goal_key}_input",
+                        value=st.session_state.get(f"{goal_key}_value", 0),
+                        on_change=update_allocation
                     )
                     
-                    if st.button("Add Funds", key=f"btn_{name}_{idx}"):
-                        update_allocation(name, idx)
+                    # Add Funds button
+                    if st.button("Add Funds", key=f"btn_{goal_key}", use_container_width=True):
+                        update_allocation()
                 
                 st.markdown("---")
     else:
         st.info("No goals yet. Create your first financial goal above!")
-    
-    # Allocate funds to existing goals
-    st.markdown("### 💸 Allocate Funds to Existing Goals")
-    goals = data['goals']
-    
-    if goals:
-        for idx, goal in enumerate(goals):
-            goal_name = goal.get('name', 'Unknown')
-            allocate_amount = st.number_input(
-                f"Allocate funds to {goal_name}",
-                min_value=0.0,
-                step=100.0,
-                key=f"allocate_{goal_name}_{idx}"  # Make key unique with index
-            )
-            
-            if st.button(f"Allocate to {goal_name}", key=f"allocate_btn_{goal_name}_{idx}"):
-                if allocate_amount > 0:
-                    c = db_conn.cursor()
-                    current_amount = goal[2]  # current_amount from goal data
-                    new_amount = current_amount + allocate_amount
-                    
-                    # Update goal's current amount
-                    c.execute("UPDATE goals SET current_amount=? WHERE telegram_id=? AND goal_name=?",
-                            (new_amount, st.session_state.telegram_id, goal_name))
-                    
-                    # Record the transaction
-                    c.execute("""INSERT INTO transactions (telegram_id, amount, type, category, description, date)
-                                VALUES (?, ?, 'goal_allocation', ?, ?, ?)""",
-                            (st.session_state.telegram_id, allocate_amount, goal_name,
-                             f"Allocated to {goal_name}", datetime.now().date().isoformat()))
-                    db_conn.commit()
-                    st.success(f"✅ Allocated ₹{allocate_amount:,.0f} to {goal_name}!")
-                    st.rerun()
-    else:
-        st.info("No goals available to allocate funds. Create a goal first!")
 
 def transactions_page():
     """Add income and expenses page."""
