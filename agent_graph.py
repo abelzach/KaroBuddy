@@ -540,7 +540,8 @@ Based on your forecast, here’s a suggested budget:
 • "Create goal [name] with target [amount]"
 • "Generate report" - Download PDF/Excel reports
 • "Suggest investments" - Get recommendations
-• "Check [STOCK] stock" - Analyze stocks"""
+• "Check [STOCK] stock" - Analyze stocks
+• "Run DFG Analysis" - Predict cash flow"""
         
         else:
             # General conversation with Claude

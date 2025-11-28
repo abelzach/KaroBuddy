@@ -458,6 +458,71 @@ def chat_page():
             st.markdown(message['content'])
     
     # Chat input
+    
+    # Suggested Actions
+    if 'dfg_confirmation' not in st.session_state:
+        st.session_state.dfg_confirmation = False
+
+    if st.session_state.dfg_confirmation:
+        st.markdown("""
+        <div style="background-color: #1e2130; padding: 20px; border-radius: 10px; border: 1px solid #667eea; margin-bottom: 20px;">
+            <h3 style="margin-top: 0;">🧬 DFG Analysis</h3>
+            <p><strong>Dynamic Financial Genome (DFG)</strong> analysis uses your transaction history to:</p>
+            <ul>
+                <li>🔮 Predict your future cash flow</li>
+                <li>📊 Calculate your income volatility score</li>
+                <li>💡 Generate a personalized dynamic budget</li>
+            </ul>
+            <p style="font-size: 0.9em; color: #aaa;">This will analyze your last 90 days of transactions.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Generate Analysis", use_container_width=True):
+                st.session_state.dfg_confirmation = False
+                action_clicked = "Analyze my DFG and predict cash flow"
+        with col2:
+            if st.button("❌ Go Back", use_container_width=True):
+                st.session_state.dfg_confirmation = False
+                st.rerun()
+    else:
+        st.markdown("### Suggested Actions")
+        col1, col2, col3 = st.columns(3)
+        
+        action_clicked = None
+        
+        with col1:
+            if st.button("🔮 Run DFG Analysis", use_container_width=True):
+                st.session_state.dfg_confirmation = True
+                st.rerun()
+                
+        with col2:
+            if st.button("📊 Generate Report", use_container_width=True):
+                 action_clicked = "Generate a comprehensive financial report"
+                 
+        with col3:
+            if st.button("💡 Investment Tips", use_container_width=True):
+                action_clicked = "Suggest investments based on my risk profile"
+
+    # Handle button clicks
+    if action_clicked:
+        # Add user message
+        st.session_state.chat_history.append({'role': 'user', 'content': action_clicked})
+        
+        # Get AI response
+        with st.spinner("Analyzing..."):
+            try:
+                response, _ = asyncio.run(run_agent_graph(
+                    st.session_state.telegram_id,
+                    action_clicked,
+                    "general" # Router will handle intent
+                ))
+                st.session_state.chat_history.append({'role': 'assistant', 'content': response})
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+
     if prompt := st.chat_input("Ask me anything about your finances..."):
         # Add user message to chat history
         st.session_state.chat_history.append({
@@ -748,40 +813,172 @@ def transactions_page():
     else:
         st.info("No transactions yet. Add your first transaction above!")
 
-def analytics_page():
-    """Advanced analytics page."""
+
+
+def dfg_page():
+    """Dynamic Financial Genome Analysis Page."""
     st.markdown("""
     <div class="main-header">
-        <h1>📈 Financial Analytics</h1>
-        <p>Deep insights into your financial health</p>
+        <h1>🧬 DFG Analysis</h1>
+        <p>Your Dynamic Financial Genome & Forecast</p>
     </div>
     """, unsafe_allow_html=True)
     
-    data = get_dashboard_data(st.session_state.telegram_id, days=90)
+    telegram_id = st.session_state.telegram_id
+    c = db_conn.cursor()
     
-    # Savings rate
-    savings_rate = (data['savings'] / data['income'] * 100) if data['income'] > 0 else 0
+    # Fetch latest DFG data
+    c.execute("""SELECT income_volatility_score, predicted_cash_flow_json, last_updated 
+                 FROM dynamic_financial_genome WHERE user_id=?""", (telegram_id,))
+    dfg_data = c.fetchone()
     
-    col1, col2, col3 = st.columns(3)
+    # Fetch latest budget
+    c.execute("""SELECT recommended_allocations_json FROM dynamic_budgets 
+                 WHERE user_id=? ORDER BY created_at DESC LIMIT 1""", (telegram_id,))
+    budget_data = c.fetchone()
     
+    if not dfg_data:
+        st.info("No DFG analysis found. Go to the Chat and ask to 'Analyze my DFG' or 'Predict cash flow'!")
+        if st.button("🔮 Run DFG Analysis Now"):
+             with st.spinner("Crunching the numbers..."):
+                 try:
+                     response, _ = asyncio.run(run_agent_graph(telegram_id, "Analyze my DFG", "dfg_analysis"))
+                     st.success("Analysis Complete!")
+                     st.markdown(response)
+                     time.sleep(2)
+                     st.rerun()
+                 except Exception as e:
+                     st.error(f"Error: {str(e)}")
+        return
+
+    import json
+    try:
+        cash_flow = json.loads(dfg_data[1].replace("'", '"'))
+        volatility = dfg_data[0]
+    except:
+        try:
+            import ast
+            cash_flow = ast.literal_eval(dfg_data[1])
+            volatility = dfg_data[0]
+        except:
+             st.error("Error parsing DFG data.")
+             return
+
+    # --- Metrics Section ---
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Savings Rate", f"{savings_rate:.1f}%",
-                 delta="Good" if savings_rate > 20 else "Needs Improvement")
-    
+        st.metric("Predicted Income", f"₹{cash_flow.get('predicted_income', 0):,.0f}")
     with col2:
-        expense_ratio = (data['expense'] / data['income'] * 100) if data['income'] > 0 else 0
-        st.metric("Expense Ratio", f"{expense_ratio:.1f}%",
-                 delta="High" if expense_ratio > 70 else "Healthy",
-                 delta_color="inverse")
-    
+        st.metric("Predicted Expenses", f"₹{cash_flow.get('predicted_expenses', 0):,.0f}")
     with col3:
-        goal_progress = sum([g[2] for g in data['goals']]) / sum([g[1] for g in data['goals']]) * 100 if data['goals'] else 0
-        st.metric("Overall Goal Progress", f"{goal_progress:.1f}%")
-    
+        net_flow = cash_flow.get('net_cash_flow', 0)
+        st.metric("Net Cash Flow", f"₹{net_flow:,.0f}", delta_color="normal" if net_flow >= 0 else "inverse")
+    with col4:
+        st.metric("Volatility Score", f"{volatility:.2f}", 
+                  delta="High Risk" if volatility > 2 else "Stable", delta_color="inverse")
+
     st.markdown("---")
+
+    # --- Cash Flow Graph ---
+    st.subheader("📈 Cash Flow Projection")
     
-    # More charts and analytics can be added here
-    st.info("More analytics features coming soon!")
+    # 1. Get Historical Data (Last 90 days)
+    c.execute("""SELECT date, SUM(amount) as net_amount 
+                 FROM transactions 
+                 WHERE telegram_id=? AND date > date('now', '-90 days')
+                 GROUP BY date ORDER BY date""", (telegram_id,))
+    history_rows = c.fetchall()
+    
+    history_df = pd.DataFrame(history_rows, columns=['Date', 'Net Amount'])
+    history_df['Date'] = pd.to_datetime(history_df['Date'])
+    
+    # Cumulative Cash Flow
+    if not history_df.empty:
+        history_df['Cumulative'] = history_df['Net Amount'].cumsum()
+    else:
+        history_df['Cumulative'] = []
+
+    # 2. Generate Prediction Data (Next 30 days)
+    last_date = history_df['Date'].max() if not history_df.empty else datetime.now()
+    last_val = history_df['Cumulative'].iloc[-1] if not history_df.empty else 0
+    
+    pred_net_daily = cash_flow.get('net_cash_flow', 0) / 30 
+    
+    future_dates = [last_date + timedelta(days=i) for i in range(1, 31)]
+    future_vals = [last_val + (pred_net_daily * i) for i in range(1, 31)]
+    
+    future_df = pd.DataFrame({'Date': future_dates, 'Cumulative': future_vals})
+
+    # 3. Plot
+    fig = go.Figure()
+
+    # Solid line for known points
+    if not history_df.empty:
+        fig.add_trace(go.Scatter(
+            x=history_df['Date'], 
+            y=history_df['Cumulative'],
+            mode='lines+markers',
+            name='Historical Cash Flow',
+            line=dict(color='#2ca02c', width=3)
+        ))
+
+    # Dotted line for predicted cost/flow
+    fig.add_trace(go.Scatter(
+        x=future_df['Date'], 
+        y=future_df['Cumulative'],
+        mode='lines',
+        name='Predicted Trend',
+        line=dict(color='#ff7f0e', width=3, dash='dot')
+    ))
+
+    fig.update_layout(
+        template='plotly_dark',
+        height=400,
+        title="Cash Flow Trajectory (90 Days History + 30 Days Forecast)",
+        xaxis_title="Date",
+        yaxis_title="Cumulative Net Cash Flow (₹)",
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # --- Dynamic Budget Section ---
+    st.markdown("---")
+    st.subheader("💡 Dynamic Budget Allocation")
+    
+    if budget_data:
+        try:
+            budget = json.loads(budget_data[0].replace("'", '"'))
+        except:
+             try:
+                import ast
+                budget = ast.literal_eval(budget_data[0])
+             except:
+                budget = {}
+        
+        b_col1, b_col2 = st.columns([1, 1])
+        
+        with b_col1:
+            labels = ['Needs', 'Wants', 'Savings']
+            values = [
+                budget.get('needs_allocation', 0),
+                budget.get('wants_allocation', 0),
+                budget.get('savings_allocation', 0)
+            ]
+            
+            fig_donut = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.4)])
+            fig_donut.update_layout(template='plotly_dark', height=300, title="Recommended Allocation")
+            st.plotly_chart(fig_donut, use_container_width=True)
+            
+        with b_col2:
+            st.markdown("### Budget Details")
+            st.info(f"**Needs (50%):** ₹{values[0]:,.0f}\n\nEssential expenses like rent, food, utilities.")
+            st.warning(f"**Wants (30%):** ₹{values[1]:,.0f}\n\nDiscretionary spending like dining out, entertainment.")
+            st.success(f"**Savings (20%):** ₹{values[2]:,.0f}\n\nInvestments and emergency fund.")
+            
+            if budget.get('notes'):
+                st.caption(f"*Note: {budget.get('notes')}*")
+    else:
+        st.info("No dynamic budget generated yet.")
 
 def main():
     """Main application logic."""
@@ -796,7 +993,7 @@ def main():
             
             page = st.radio(
                 "Navigation",
-                ["📊 Dashboard", "💰 Add Transaction", "� AI Chat", "🎯 Goals", "📈 Analytics"],
+                ["📊 Dashboard", "💰 Add Transaction", " AI Chat", "🎯 Goals", "🧬 DFG Analysis"],
                 label_visibility="collapsed"
             )
             
@@ -819,8 +1016,8 @@ def main():
             chat_page()
         elif page == "🎯 Goals":
             goals_page()
-        elif page == "📈 Analytics":
-            analytics_page()
+        elif page == "🧬 DFG Analysis":
+            dfg_page()
 
 if __name__ == "__main__":
     main()
