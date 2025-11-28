@@ -10,6 +10,9 @@ from tools.goal_tool import goal_tool
 from tools.risk_tool import risk_tool
 from tools.investment_intelligence_tool import investment_intelligence_tool
 from tools.report_tool import report_tool
+from tools.cash_flow_tool import predict_cash_flow
+from tools.dynamic_budget_tool import generate_dynamic_budget
+from tools.behavioral_bias_tool import analyze_user_activity
 from database import db_conn, db_manager
 import os
 import config
@@ -80,6 +83,10 @@ def route_intent(state: AgentState) -> AgentState:
         state['intent'] = 'expense'
     elif any(word in message for word in ['risk', 'risk profile', 'risk level']):
         state['intent'] = 'risk_profile'
+    elif any(word in message for word in ['dfg', 'cash flow', 'prediction', 'dynamic budget']):
+        state['intent'] = 'dfg_analysis'
+    elif any(word in message for word in ['bias', 'behavior', 'habits']):
+        state['intent'] = 'behavioral_analysis'
     else:
         state['intent'] = 'general'
     
@@ -346,6 +353,108 @@ Use /dashboard to see your financial overview."""
             else:
                 state['response'] = result
                 state['file_paths'] = []
+
+        elif intent == 'dfg_analysis':
+            from datetime import datetime
+            # 1. Fetch transactions
+            raw_transactions = db_manager.get_transactions(telegram_id, days=90) # Use 90 days for better prediction
+            if len(raw_transactions) < 10:
+                state['response'] = "I need more transaction data (at least 10 transactions over 90 days) to provide a reliable cash flow prediction. Keep logging your income and expenses!"
+                return state
+
+            transactions = [{'date': t[5], 'amount': t[1], 'currency': 'INR'} for t in raw_transactions]
+
+            # 2. Call cash flow prediction tool
+            cash_flow_prediction = predict_cash_flow(transactions)
+
+            # 3. Call dynamic budget tool
+            # For now, we pass no specific goals. This can be enhanced later.
+            dynamic_budget = generate_dynamic_budget(cash_flow_prediction)
+
+            # 4. Save results to DB
+            c = db_conn.cursor()
+            c.execute("""INSERT OR REPLACE INTO dynamic_financial_genome 
+                         (user_id, income_volatility_score, predicted_cash_flow_json, last_updated)
+                         VALUES (?, ?, ?, ?)""",
+                      (telegram_id, 
+                       cash_flow_prediction['volatility_score'],
+                       str(cash_flow_prediction),
+                       datetime.now().isoformat()))
+            
+            c.execute("""INSERT INTO dynamic_budgets 
+                         (user_id, budget_period, recommended_allocations_json, created_at)
+                         VALUES (?, ?, ?, ?)""",
+                      (telegram_id,
+                       datetime.now().strftime('%Y-%m'),
+                       str(dynamic_budget),
+                       datetime.now().isoformat()))
+            db_conn.commit()
+
+            # 5. Format response
+            response = f"""🔮 **Your Dynamic Financial Genome (Next 30 Days)**
+
+Here's your AI-powered financial forecast:
+
+📈 **Predicted Income:** ₹{cash_flow_prediction['predicted_income']:,.0f}
+📉 **Predicted Expenses:** ₹{cash_flow_prediction['predicted_expenses']:,.0f}
+💸 **Predicted Net Flow:** ₹{cash_flow_prediction['net_cash_flow']:,.0f}
+
+🌪️ **Income Volatility:** {cash_flow_prediction['volatility_score']:.2f}
+*(A higher score means your income is less stable. <1 is low, >2 is high)*
+
+---
+
+**💡 Recommended Dynamic Budget**
+
+Based on your forecast, here’s a suggested budget:
+
+- **Needs (50%):** ₹{dynamic_budget.get('needs_allocation', 0):,.0f}
+- **Wants (30%):** ₹{dynamic_budget.get('wants_allocation', 0):,.0f}
+- **Savings (20%):** ₹{dynamic_budget.get('savings_allocation', 0):,.0f}
+
+*{dynamic_budget.get('notes')}*
+"""
+            state['response'] = response
+
+        elif intent == 'behavioral_analysis':
+            from datetime import datetime
+            # 1. Fetch transactions
+            raw_transactions = db_manager.get_transactions(telegram_id, days=90)
+            if not raw_transactions:
+                state['response'] = "I need some transaction data to analyze your financial behavior."
+                return state
+            
+            transactions = [{'id': t[0], 'date': t[5], 'amount': t[1], 'description': t[4]} for t in raw_transactions]
+
+
+            # 2. Call behavioral analysis tool (mock market data)
+            # In a real scenario, this would come from a market data API
+            mock_market_data = {"market_change_pct": -4.5} 
+            biases = analyze_user_activity(transactions, mock_market_data)
+
+            # 3. Save biases to DB
+            c = db_conn.cursor()
+            for bias in biases:
+                c.execute("""INSERT INTO behavioral_biases
+                             (user_id, bias_type, event_timestamp, description, related_transaction_ids_json)
+                             VALUES (?, ?, ?, ?, ?)""",
+                          (telegram_id,
+                           bias['bias_type'],
+                           bias['event_timestamp'],
+                           bias['description'],
+                           str(bias.get('related_transaction_id'))))
+            db_conn.commit()
+
+            # 4. Format response
+            if not biases:
+                response = "✅ **Behavioral Analysis Complete**\n\nI analyzed your recent financial activity and didn't find any clear patterns of common behavioral biases. Great job staying disciplined!"
+            else:
+                response = "🧠 **Your Behavioral Analysis**\n\nI noticed a few patterns in your recent activity you might want to be aware of:\n\n"
+                for bias in biases:
+                    response += f"- **{bias['bias_type'].replace('_', ' ').title()}**: {bias['description']}\n"
+                response += "\nBeing aware of these tendencies is the first step to making even smarter financial decisions!"
+            
+            state['response'] = response
         
         elif intent == 'dashboard':
             # Generate comprehensive dashboard

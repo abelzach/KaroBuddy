@@ -27,9 +27,9 @@ class DatabaseManager:
             telegram_id INTEGER PRIMARY KEY,
             name TEXT,
             username TEXT,
-            language TEXT DEFAULT 'en',
             income_type TEXT,
             risk_profile TEXT DEFAULT 'medium',
+            language TEXT DEFAULT 'en',
             created_at TEXT
         )''')
         
@@ -67,6 +67,36 @@ class DatabaseManager:
             agent_used TEXT,
             timestamp TEXT,
             FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+        )''')
+        
+        # DFG Engine: Dynamic Financial Genome table
+        c.execute('''CREATE TABLE IF NOT EXISTS dynamic_financial_genome (
+            user_id INTEGER PRIMARY KEY,
+            income_volatility_score REAL,
+            predicted_cash_flow_json TEXT,
+            last_updated TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+        )''')
+
+        # DFG Engine: Behavioral Biases table
+        c.execute('''CREATE TABLE IF NOT EXISTS behavioral_biases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            bias_type TEXT,
+            event_timestamp TEXT,
+            description TEXT,
+            related_transaction_ids_json TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+        )''')
+
+        # DFG Engine: Dynamic Budgets table
+        c.execute('''CREATE TABLE IF NOT EXISTS dynamic_budgets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            budget_period TEXT,
+            recommended_allocations_json TEXT,
+            created_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(telegram_id)
         )''')
         
         conn.commit()
@@ -122,14 +152,14 @@ class DatabaseManager:
     def get_user_language(self, telegram_id: int) -> str:
         """Get user's preferred language."""
         c = self.conn.cursor()
-        c.execute("SELECT language FROM users WHERE telegram_id = ?", (telegram_id,))
+        c.execute("SELECT language FROM users WHERE telegram_id=?", (telegram_id,))
         result = c.fetchone()
-        return result[0] if result and result[0] else "en"
+        return result[0] if result else 'en'
     
     def set_user_language(self, telegram_id: int, language: str):
         """Set user's preferred language."""
         c = self.conn.cursor()
-        c.execute("UPDATE users SET language = ? WHERE telegram_id = ?", (language, telegram_id))
+        c.execute("UPDATE users SET language=? WHERE telegram_id=?", (language, telegram_id))
         self.conn.commit()
     
     def log_transaction(self, telegram_id: int, amount: float, trans_type: str, 
@@ -147,14 +177,14 @@ class DatabaseManager:
         """Get transactions for a user."""
         c = self.conn.cursor()
         if trans_type:
-            c.execute("""SELECT amount, type, category, description, date 
+            c.execute("""SELECT id, amount, type, category, description, date 
                         FROM transactions 
                         WHERE telegram_id=? AND type=? 
                         AND date > date('now', '-' || ? || ' days')
                         ORDER BY date DESC""",
                      (telegram_id, trans_type, days))
         else:
-            c.execute("""SELECT amount, type, category, description, date 
+            c.execute("""SELECT id, amount, type, category, description, date 
                         FROM transactions 
                         WHERE telegram_id=? 
                         AND date > date('now', '-' || ? || ' days')
