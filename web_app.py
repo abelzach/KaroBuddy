@@ -458,71 +458,6 @@ def chat_page():
             st.markdown(message['content'])
     
     # Chat input
-    
-    # Suggested Actions
-    if 'dfg_confirmation' not in st.session_state:
-        st.session_state.dfg_confirmation = False
-
-    if st.session_state.dfg_confirmation:
-        st.markdown("""
-        <div style="background-color: #1e2130; padding: 20px; border-radius: 10px; border: 1px solid #667eea; margin-bottom: 20px;">
-            <h3 style="margin-top: 0;">🧬 DFG Analysis</h3>
-            <p><strong>Dynamic Financial Genome (DFG)</strong> analysis uses your transaction history to:</p>
-            <ul>
-                <li>🔮 Predict your future cash flow</li>
-                <li>📊 Calculate your income volatility score</li>
-                <li>💡 Generate a personalized dynamic budget</li>
-            </ul>
-            <p style="font-size: 0.9em; color: #aaa;">This will analyze your last 90 days of transactions.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Generate Analysis", use_container_width=True):
-                st.session_state.dfg_confirmation = False
-                action_clicked = "Analyze my DFG and predict cash flow"
-        with col2:
-            if st.button("❌ Go Back", use_container_width=True):
-                st.session_state.dfg_confirmation = False
-                st.rerun()
-    else:
-        st.markdown("### Suggested Actions")
-        col1, col2, col3 = st.columns(3)
-        
-        action_clicked = None
-        
-        with col1:
-            if st.button("🔮 Run DFG Analysis", use_container_width=True):
-                st.session_state.dfg_confirmation = True
-                st.rerun()
-                
-        with col2:
-            if st.button("📊 Generate Report", use_container_width=True):
-                 action_clicked = "Generate a comprehensive financial report"
-                 
-        with col3:
-            if st.button("💡 Investment Tips", use_container_width=True):
-                action_clicked = "Suggest investments based on my risk profile"
-
-    # Handle button clicks
-    if action_clicked:
-        # Add user message
-        st.session_state.chat_history.append({'role': 'user', 'content': action_clicked})
-        
-        # Get AI response
-        with st.spinner("Analyzing..."):
-            try:
-                response, _ = asyncio.run(run_agent_graph(
-                    st.session_state.telegram_id,
-                    action_clicked,
-                    "general" # Router will handle intent
-                ))
-                st.session_state.chat_history.append({'role': 'assistant', 'content': response})
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-
     if prompt := st.chat_input("Ask me anything about your finances..."):
         # Add user message to chat history
         st.session_state.chat_history.append({
@@ -1018,7 +953,7 @@ def main():
             
             page = st.radio(
                 "Navigation",
-                ["📊 Dashboard", "💰 Add Transaction", " AI Chat", "🎯 Goals", "🧬 DFG Analysis"],
+                ["📊 Dashboard", "💰 Add Transaction", "💬 AI Chat", "🎯 Goals", "🧬 DFG Analysis"],
                 label_visibility="collapsed"
             )
             
@@ -1037,7 +972,7 @@ def main():
             dashboard_page()
         elif page == "💰 Add Transaction":
             transactions_page()
-        elif page == "� AI Chat":
+        elif page == "💬 AI Chat":
             chat_page()
         elif page == "🎯 Goals":
             goals_page()
