@@ -55,6 +55,7 @@ class DatabaseManager:
             deadline TEXT,
             status TEXT DEFAULT 'active',
             created_at TEXT,
+            UNIQUE(telegram_id, goal_name),
             FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
         )''')
         
@@ -159,8 +160,11 @@ class DatabaseManager:
     def set_user_language(self, telegram_id: int, language: str):
         """Set user's preferred language."""
         c = self.conn.cursor()
-        c.execute("UPDATE users SET language=? WHERE telegram_id=?", (language, telegram_id))
-        self.conn.commit()
+        try:
+            c.execute("UPDATE users SET language = ? WHERE telegram_id = ?", (language, telegram_id))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
     
     def log_transaction(self, telegram_id: int, amount: float, trans_type: str, 
                        category: str = None, description: str = None):
@@ -196,9 +200,13 @@ class DatabaseManager:
                          response: str, agent_used: str = None):
         """Save conversation to history."""
         c = self.conn.cursor()
-        c.execute("""INSERT INTO conversations (telegram_id, message, response, agent_used, timestamp)
-                     VALUES (?, ?, ?, ?, ?)""",
-                  (telegram_id, message, response, agent_used, datetime.now().isoformat()))
+        try:
+            c.execute("""INSERT INTO conversations (telegram_id, message, response, agent_used, timestamp)
+                         VALUES (?, ?, ?, ?, ?)""",
+                      (telegram_id, message, response, agent_used, datetime.now().isoformat()))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
         self.conn.commit()
     
     def close(self):
