@@ -3,6 +3,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
+import time
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from streamlit.source_util import get_pages
 from database import db_conn
 import hashlib
 import secrets
@@ -135,17 +138,44 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Session state initialization
+# Initialize session state at the module level
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'telegram_id' not in st.session_state:
     st.session_state.telegram_id = None
-if 'user_name' not in st.session_state:
-    st.session_state.user_name = None
-if 'auth_token' not in st.session_state:
-    st.session_state.auth_token = None
+if 'last_activity' not in st.session_state:
+    st.session_state.last_activity = time.time()
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+
+def check_session_timeout():
+    """Check if the session has timed out (30 minutes of inactivity)."""
+    current_time = time.time()
+    inactive_seconds = current_time - st.session_state.last_activity
+    
+    if inactive_seconds > 1800:  # 30 minutes in seconds
+        st.session_state.authenticated = False
+        st.session_state.telegram_id = None
+        st.session_state.last_activity = current_time
+        st.rerun()
+    
+    st.session_state.last_activity = current_time
+
+def main():
+    """Main application logic."""
+    # Initialize session state
+    if 'telegram_id' not in st.session_state:
+        st.session_state.telegram_id = None
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'last_activity' not in st.session_state:
+        st.session_state.last_activity = time.time()
+    
+    # Check session timeout
+    check_session_timeout()
+
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
 
 def generate_auth_token():
     """Generate a unique authentication token."""
@@ -499,7 +529,7 @@ def goals_page():
     
     # Display goals
     if data['goals']:
-        for goal in data['goals']:
+        for idx, goal in enumerate(data['goals']):
             name, target, current, deadline, status = goal
             progress = (current / target * 100) if target > 0 else 0
             
@@ -517,25 +547,44 @@ def goals_page():
                     st.caption(f"Deadline: {deadline}")
                 
                 with col3:
+                    # Create a unique key using both the goal name and its index
+                    goal_key = f"allocate_{name}_{idx}"
+                    
+                    # Initialize allocation amount in session state if not exists
+                    if goal_key not in st.session_state:
+                        st.session_state[goal_key] = 0
+                    
+                    # Use a callback to handle the allocation
+                    def update_allocation(goal_name=name, goal_idx=idx):
+                        amount_key = f"allocate_{goal_name}_{goal_idx}"
+                        if amount_key in st.session_state:
+                            allocate_amount = st.session_state[amount_key]
+                            if allocate_amount > 0:
+                                with st.spinner(f'Processing allocation of ₹{allocate_amount:,.0f}...'):
+                                    c = db_conn.cursor()
+                                    new_amount = current + allocate_amount
+                                    c.execute("UPDATE goals SET current_amount=? WHERE telegram_id=? AND goal_name=?",
+                                            (new_amount, st.session_state.telegram_id, goal_name))
+                                    c.execute("""INSERT INTO transactions (telegram_id, amount, type, category, description, date)
+                                                VALUES (?, ?, 'goal_allocation', ?, ?, ?)""",
+                                            (st.session_state.telegram_id, allocate_amount, goal_name,
+                                             f"Allocated to {goal_name}", datetime.now().date().isoformat()))
+                                    db_conn.commit()
+                                    st.session_state[amount_key] = 0
+                                    st.rerun()
+                    
+                    # Create the number input with on_change callback
                     allocate_amount = st.number_input(
                         "Allocate",
                         min_value=0,
                         step=100,
-                        key=f"allocate_{name}"
+                        key=goal_key,
+                        on_change=update_allocation,
+                        args=(name, idx)
                     )
-                    if st.button("Add Funds", key=f"btn_{name}"):
-                        if allocate_amount > 0:
-                            c = db_conn.cursor()
-                            new_amount = current + allocate_amount
-                            c.execute("UPDATE goals SET current_amount=? WHERE telegram_id=? AND goal_name=?",
-                                    (new_amount, st.session_state.telegram_id, name))
-                            c.execute("""INSERT INTO transactions (telegram_id, amount, type, category, description, date)
-                                        VALUES (?, ?, 'goal_allocation', ?, ?, ?)""",
-                                    (st.session_state.telegram_id, allocate_amount, name,
-                                     f"Allocated to {name}", datetime.now().date().isoformat()))
-                            db_conn.commit()
-                            st.success(f"✅ Allocated ₹{allocate_amount:,.0f} to {name}!")
-                            st.rerun()
+                    
+                    if st.button("Add Funds", key=f"btn_{name}_{idx}"):
+                        update_allocation(name, idx)
                 
                 st.markdown("---")
     else:
