@@ -9,6 +9,7 @@ from tools.stock_tool import stock_tool
 from tools.goal_tool import goal_tool
 from tools.risk_tool import risk_tool
 from tools.investment_intelligence_tool import investment_intelligence_tool
+from tools.report_tool import report_tool
 from database import db_conn, db_manager
 import os
 import config
@@ -21,6 +22,7 @@ class AgentState(TypedDict):
     intent: str
     response: str
     tool_calls: Annotated[list, operator.add]
+    file_paths: list
 
 # Initialize Claude
 llm = ChatAnthropic(
@@ -68,7 +70,9 @@ def route_intent(state: AgentState) -> AgentState:
         state['intent'] = 'stock'
     elif any(word in message for word in ['suggest', 'recommend', 'investment', 'where to invest', 'should i invest']):
         state['intent'] = 'investment_recommendation'
-    elif any(word in message for word in ['dashboard', 'summary', 'overview', 'report']):
+    elif any(word in message for word in ['generate report', 'create report', 'download report', 'export report', 'pdf report', 'excel report', 'spreadsheet', 'spending report', 'investment report', 'comprehensive report']):
+        state['intent'] = 'report_generation'
+    elif any(word in message for word in ['dashboard', 'summary', 'overview']):
         state['intent'] = 'dashboard'
     elif any(word in message for word in ['expense', 'spent', 'paid for', 'bought']):
         state['intent'] = 'expense'
@@ -273,43 +277,84 @@ Use /dashboard to see your financial overview."""
             else:
                 state['response'] = "Please specify the amount. Example: 'Spent 2500 on groceries'"
         
+        elif intent == 'report_generation':
+            # Parse report generation request
+            message_lower = message.lower()
+            
+            # Determine report type
+            if 'spending' in message_lower or 'expense' in message_lower:
+                report_type = 'spending'
+            elif 'investment' in message_lower or 'portfolio' in message_lower:
+                report_type = 'investment'
+            else:
+                report_type = 'comprehensive'
+            
+            # Determine format
+            if 'pdf' in message_lower and 'excel' in message_lower:
+                format_type = 'both'
+            elif 'excel' in message_lower or 'spreadsheet' in message_lower or 'xlsx' in message_lower:
+                format_type = 'excel'
+            else:
+                format_type = 'pdf'  # Default to PDF
+            
+            # Extract period if specified
+            period_match = re.search(r'(?:last|past)\s+(\d+)\s+days?', message_lower)
+            period_days = int(period_match.group(1)) if period_match else 30
+            
+            # Generate report
+            result = report_tool._run(telegram_id, report_type, format_type, period_days)
+            
+            # Check if result is a tuple (message, file_paths)
+            if isinstance(result, tuple):
+                state['response'] = result[0]
+                state['file_paths'] = result[1]
+            else:
+                state['response'] = result
+                state['file_paths'] = []
+        
         elif intent == 'dashboard':
-            # Generate dashboard
+            # Generate comprehensive dashboard
             c = db_conn.cursor()
-            c.execute("""SELECT SUM(amount) FROM transactions 
-                         WHERE telegram_id=? AND type='income' 
+            
+            # Income
+            c.execute("""SELECT SUM(amount) FROM transactions
+                         WHERE telegram_id=? AND type='income'
                          AND date > date('now', '-30 days')""", (telegram_id,))
             income = c.fetchone()[0] or 0
             
-            c.execute("""SELECT SUM(amount) FROM transactions 
-                         WHERE telegram_id=? AND type='expense' 
+            # Expenses
+            c.execute("""SELECT SUM(amount) FROM transactions
+                         WHERE telegram_id=? AND type='expense'
                          AND date > date('now', '-30 days')""", (telegram_id,))
             expense = c.fetchone()[0] or 0
             
-            c.execute("""SELECT SUM(amount) FROM transactions 
-                         WHERE telegram_id=? AND type='goal_allocation' 
+            # Goal allocations
+            c.execute("""SELECT SUM(amount) FROM transactions
+                         WHERE telegram_id=? AND type='goal_allocation'
                          AND date > date('now', '-30 days')""", (telegram_id,))
             goal_allocation = c.fetchone()[0] or 0
             
-            c.execute("""SELECT COUNT(*), SUM(current_amount), SUM(target_amount) 
+            # Active goals
+            c.execute("""SELECT COUNT(*), SUM(current_amount), SUM(target_amount)
                          FROM goals WHERE telegram_id=? AND status='active'""", (telegram_id,))
             goal_stats = c.fetchone()
             active_goals = goal_stats[0] or 0
             goal_saved = goal_stats[1] or 0
             goal_target = goal_stats[2] or 0
             
+            # Calculate true savings (excluding goal allocations)
             true_expense = expense
             savings = income - true_expense - goal_allocation
             rate = (savings/income*100) if income > 0 else 0
             
-            # Get transaction counts
-            c.execute("""SELECT COUNT(*) FROM transactions 
-                         WHERE telegram_id=? AND type='income' 
+            # Transaction counts
+            c.execute("""SELECT COUNT(*) FROM transactions
+                         WHERE telegram_id=? AND type='income'
                          AND date > date('now', '-30 days')""", (telegram_id,))
             income_count = c.fetchone()[0]
             
-            c.execute("""SELECT COUNT(*) FROM transactions 
-                         WHERE telegram_id=? AND type='expense' 
+            c.execute("""SELECT COUNT(*) FROM transactions
+                         WHERE telegram_id=? AND type='expense'
                          AND date > date('now', '-30 days')""", (telegram_id,))
             expense_count = c.fetchone()[0]
             
@@ -349,6 +394,7 @@ Use /dashboard to see your financial overview."""
 💡 Quick Actions:
 • "Show my goals" - View goal details
 • "Create goal [name] with target [amount]"
+• "Generate report" - Download PDF/Excel reports
 • "Suggest investments" - Get recommendations
 • "Check [STOCK] stock" - Analyze stocks"""
         
@@ -387,21 +433,22 @@ workflow.add_edge("call_agent", END)
 graph = workflow.compile()
 
 # Runner function
-async def run_agent_graph(telegram_id: int, message: str, intent: str = None) -> str:
-    """Execute the agent graph."""
+async def run_agent_graph(telegram_id: int, message: str, intent: str = None):
+    """Execute the agent graph. Returns (response, file_paths)."""
     initial_state = {
         "telegram_id": telegram_id,
         "message": message,
         "intent": intent or "general",
         "response": "",
-        "tool_calls": []
+        "tool_calls": [],
+        "file_paths": []
     }
     
     try:
         result = graph.invoke(initial_state)
-        return result['response']
+        return result['response'], result.get('file_paths', [])
     except Exception as e:
         print(f"Error in run_agent_graph: {e}")
         import traceback
         traceback.print_exc()
-        return f"⚠️ Sorry, I encountered an error: {str(e)}\n\nPlease try again!"
+        return f"⚠️ Sorry, I encountered an error: {str(e)}\n\nPlease try again!", []

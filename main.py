@@ -31,7 +31,10 @@ def get_main_menu_keyboard():
             InlineKeyboardButton("💼 Investment Ideas", callback_data='invest')
         ],
         [
-            InlineKeyboardButton("🛡️ Scam Check", callback_data='fraud'),
+            InlineKeyboardButton("📄 Generate Report", callback_data='report'),
+            InlineKeyboardButton("�️ Scam Check", callback_data='fraud')
+        ],
+        [
             InlineKeyboardButton("❓ Help", callback_data='help')
         ]
     ]
@@ -72,6 +75,26 @@ def get_risk_profile_keyboard():
         [InlineKeyboardButton("⚖️ Medium Risk (Balanced)", callback_data='risk_medium')],
         [InlineKeyboardButton("🚀 High Risk (Aggressive)", callback_data='risk_high')],
         [InlineKeyboardButton("🔙 Back", callback_data='invest')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_report_menu_keyboard():
+    """Get report generation menu keyboard."""
+    keyboard = [
+        [
+            InlineKeyboardButton("📊 Spending Report", callback_data='report_spending'),
+            InlineKeyboardButton("💼 Investment Report", callback_data='report_investment')
+        ],
+        [
+            InlineKeyboardButton("📈 Comprehensive Report", callback_data='report_comprehensive')
+        ],
+        [
+            InlineKeyboardButton("📄 PDF Format", callback_data='report_format_pdf'),
+            InlineKeyboardButton("📊 Excel Format", callback_data='report_format_excel')
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -184,7 +207,7 @@ async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /dashboard command."""
     user_id = update.effective_user.id
     await update.message.chat.send_action("typing")
-    result = await run_agent_graph(user_id, "show my dashboard", "dashboard")
+    result, file_paths = await run_agent_graph(user_id, "show my dashboard", "dashboard")
     
     keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -263,7 +286,7 @@ Choose what you'd like to do:"""
     
     elif action == 'goal_list':
         await query.message.chat.send_action("typing")
-        result = await run_agent_graph(user_id, "show my goals", "goal")
+        result, _ = await run_agent_graph(user_id, "show my goals", "goal")
         keyboard = [[InlineKeyboardButton("🔙 Back to Goals", callback_data='goals')]]
         await query.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
@@ -350,7 +373,7 @@ Choose what you'd like to do:"""
     elif action.startswith('risk_'):
         risk_level = action.replace('risk_', '')
         await query.message.chat.send_action("typing")
-        result = await run_agent_graph(user_id, f"Set my risk profile to {risk_level}", "risk_profile")
+        result, _ = await run_agent_graph(user_id, f"Set my risk profile to {risk_level}", "risk_profile")
         keyboard = [[InlineKeyboardButton("🔙 Back to Investments", callback_data='invest')]]
         await query.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
@@ -371,8 +394,87 @@ Choose what you'd like to do:"""
     
     elif action == 'dashboard':
         await query.message.chat.send_action("typing")
-        result = await run_agent_graph(user_id, "show my dashboard", "dashboard")
+        result, _ = await run_agent_graph(user_id, "show my dashboard", "dashboard")
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
+        await query.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif action == 'report':
+        await query.message.edit_text(
+            "📄 **Generate Financial Report**\n\n"
+            "Create professional PDF or Excel reports of your financial data.\n\n"
+            "**Report Types:**\n"
+            "📊 Spending Report - Detailed expense analysis\n"
+            "💼 Investment Report - Portfolio overview\n"
+            "📈 Comprehensive - Complete financial summary\n\n"
+            "**Formats Available:**\n"
+            "• PDF - Professional formatted document\n"
+            "• Excel - Spreadsheet with multiple sheets\n\n"
+            "Choose a report type or format below:",
+            reply_markup=get_report_menu_keyboard(),
+            parse_mode='Markdown'
+        )
+    
+    elif action.startswith('report_'):
+        # Store report preferences
+        if 'report_type' not in context.user_data:
+            context.user_data['report_type'] = 'comprehensive'
+        if 'report_format' not in context.user_data:
+            context.user_data['report_format'] = 'pdf'
+        
+        if action == 'report_spending':
+            context.user_data['report_type'] = 'spending'
+            await query.answer("✅ Spending report selected")
+        elif action == 'report_investment':
+            context.user_data['report_type'] = 'investment'
+            await query.answer("✅ Investment report selected")
+        elif action == 'report_comprehensive':
+            context.user_data['report_type'] = 'comprehensive'
+            await query.answer("✅ Comprehensive report selected")
+        elif action == 'report_format_pdf':
+            context.user_data['report_format'] = 'pdf'
+            await query.answer("✅ PDF format selected")
+        elif action == 'report_format_excel':
+            context.user_data['report_format'] = 'excel'
+            await query.answer("✅ Excel format selected")
+        
+        # Generate report
+        report_type = context.user_data.get('report_type', 'comprehensive')
+        report_format = context.user_data.get('report_format', 'pdf')
+        
+        await query.message.reply_text(
+            f"📊 Generating {report_type} report in {report_format.upper()} format...\n\n"
+            "⏳ This may take a few seconds...",
+            parse_mode='Markdown'
+        )
+        
+        await query.message.chat.send_action("upload_document")
+        
+        # Generate the report
+        message_text = f"generate {report_type} report in {report_format} format"
+        result, file_paths = await run_agent_graph(user_id, message_text, "report_generation")
+        
+        # Send the files to user
+        if file_paths:
+            for file_path in file_paths:
+                try:
+                    with open(file_path, 'rb') as f:
+                        if file_path.endswith('.pdf'):
+                            await query.message.reply_document(
+                                document=f,
+                                filename=file_path.split('/')[-1],
+                                caption=f"📄 {report_type.title()} Report"
+                            )
+                        elif file_path.endswith('.xlsx'):
+                            await query.message.reply_document(
+                                document=f,
+                                filename=file_path.split('/')[-1],
+                                caption=f"📊 {report_type.title()} Report"
+                            )
+                except Exception as e:
+                    logger.error(f"Error sending file {file_path}: {e}")
+        
+        keyboard = [[InlineKeyboardButton("📄 Generate Another", callback_data='report')],
+                   [InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
         await query.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif action == 'help':
@@ -389,6 +491,10 @@ Choose what you'd like to do:"""
 **📈 Analyze Investments:**
 "Is RELIANCE a good stock?"
 "Suggest low risk mutual funds"
+
+**📄 Generate Reports:**
+"Generate spending report"
+"Create comprehensive report in Excel"
 
 **🛡️ Check Scams:**
 "Is this a scam: [message]"
@@ -414,56 +520,77 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Route to appropriate agent based on state
     if state == 'awaiting_income':
-        result = await run_agent_graph(user_id, message, "income")
+        result, file_paths = await run_agent_graph(user_id, message, "income")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif state == 'awaiting_expense':
-        result = await run_agent_graph(user_id, message, "expense")
+        result, file_paths = await run_agent_graph(user_id, message, "expense")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif state == 'awaiting_stock':
-        result = await run_agent_graph(user_id, message, "stock_analysis" if "good" in message.lower() else "stock")
+        result, file_paths = await run_agent_graph(user_id, message, "stock_analysis" if "good" in message.lower() else "stock")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif state == 'awaiting_fraud_check':
-        result = await run_agent_graph(user_id, message, "fraud")
+        result, file_paths = await run_agent_graph(user_id, message, "fraud")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data='main_menu')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif state == 'awaiting_goal_create':
-        result = await run_agent_graph(user_id, message, "goal")
+        result, file_paths = await run_agent_graph(user_id, message, "goal")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Goals", callback_data='goals')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif state == 'awaiting_goal_allocate':
-        result = await run_agent_graph(user_id, message, "goal")
+        result, file_paths = await run_agent_graph(user_id, message, "goal")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Goals", callback_data='goals')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif state == 'awaiting_invest_stocks':
-        result = await run_agent_graph(user_id, message, "investment_recommendation")
+        result, file_paths = await run_agent_graph(user_id, message, "investment_recommendation")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Investments", callback_data='invest')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif state == 'awaiting_invest_mf':
-        result = await run_agent_graph(user_id, message, "investment_recommendation")
+        result, file_paths = await run_agent_graph(user_id, message, "investment_recommendation")
         user_states[user_id] = 'general'
         keyboard = [[InlineKeyboardButton("🔙 Back to Investments", callback_data='invest')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
     
     else:
         # General conversation - let the agent decide
-        result = await run_agent_graph(user_id, message, "general")
+        result, file_paths = await run_agent_graph(user_id, message, "general")
+        
+        # Send any files if generated
+        if file_paths:
+            for file_path in file_paths:
+                try:
+                    with open(file_path, 'rb') as f:
+                        if file_path.endswith('.pdf'):
+                            await update.message.reply_document(
+                                document=f,
+                                filename=file_path.split('/')[-1],
+                                caption="📄 Your Financial Report"
+                            )
+                        elif file_path.endswith('.xlsx'):
+                            await update.message.reply_document(
+                                document=f,
+                                filename=file_path.split('/')[-1],
+                                caption="📊 Your Financial Report"
+                            )
+                except Exception as e:
+                    logger.error(f"Error sending file {file_path}: {e}")
+        
         keyboard = [[InlineKeyboardButton("🏠 Main Menu", callback_data='main_menu')]]
         await update.message.reply_text(result, reply_markup=InlineKeyboardMarkup(keyboard))
 
