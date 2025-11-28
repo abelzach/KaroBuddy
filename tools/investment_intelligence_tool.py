@@ -5,8 +5,8 @@ import yfinance as yf
 from datetime import datetime, timedelta
 
 class InvestmentInput(BaseModel):
-    query: str = Field(description="Investment query - stock ticker or mutual fund name")
-    analysis_type: str = Field(description="Type: stock_analysis or mutual_fund_analysis")
+    query: str = Field(description="Investment query - stock ticker, mutual fund name, or sector")
+    analysis_type: str = Field(description="Type: stock_analysis, mutual_fund_analysis, sector_analysis, or top_performers")
 
 class InvestmentIntelligenceTool(BaseTool):
     name: str = "investment_intelligence"
@@ -281,6 +281,118 @@ For detailed mutual fund analysis, I recommend:
 
 Would you like stock recommendations based on your risk profile? Just tell me: "I want low/medium/high risk investments" """
         
+    def _analyze_sector_stocks(self, sector: str, period: str = "1wk") -> str:
+        """Analyze top performing stocks in a sector."""
+        try:
+            # Sector to stock mapping (top stocks in each sector)
+            sector_stocks = {
+                'gold': ['GOLDBEES.NS', 'GOLDIAM.NS', 'MANAPPURAM.NS', 'MUTHOOTFIN.NS'],
+                'it': ['TCS.NS', 'INFY.NS', 'WIPRO.NS', 'HCLTECH.NS', 'TECHM.NS'],
+                'banking': ['HDFCBANK.NS', 'ICICIBANK.NS', 'SBIN.NS', 'KOTAKBANK.NS', 'AXISBANK.NS'],
+                'pharma': ['SUNPHARMA.NS', 'DRREDDY.NS', 'CIPLA.NS', 'DIVISLAB.NS', 'AUROPHARMA.NS'],
+                'auto': ['MARUTI.NS', 'TATAMOTORS.NS', 'M&M.NS', 'BAJAJ-AUTO.NS', 'HEROMOTOCO.NS'],
+                'fmcg': ['HINDUNILVR.NS', 'ITC.NS', 'NESTLEIND.NS', 'BRITANNIA.NS', 'DABUR.NS'],
+                'energy': ['RELIANCE.NS', 'ONGC.NS', 'BPCL.NS', 'IOC.NS', 'NTPC.NS'],
+                'realty': ['DLF.NS', 'GODREJPROP.NS', 'OBEROIRLTY.NS', 'PRESTIGE.NS', 'BRIGADE.NS'],
+                'metal': ['TATASTEEL.NS', 'HINDALCO.NS', 'JSWSTEEL.NS', 'VEDL.NS', 'COALINDIA.NS']
+            }
+            
+            sector_lower = sector.lower()
+            stocks = sector_stocks.get(sector_lower, [])
+            
+            if not stocks:
+                available_sectors = ', '.join(sector_stocks.keys())
+                return f"""❌ Sector '{sector}' not found.
+
+Available sectors:
+{available_sectors}
+
+Example: "Analyze gold sector stocks" or "Show me IT sector top performers" """
+            
+            # Analyze each stock
+            results = []
+            for ticker in stocks:
+                try:
+                    stock = yf.Ticker(ticker)
+                    hist = stock.history(period=period)
+                    info = stock.info
+                    
+                    if not hist.empty and len(hist) > 1:
+                        start_price = hist['Close'].iloc[0]
+                        end_price = hist['Close'].iloc[-1]
+                        change_pct = ((end_price - start_price) / start_price) * 100
+                        
+                        company_name = info.get('longName', ticker.replace('.NS', ''))
+                        current_price = info.get('regularMarketPrice', end_price)
+                        
+                        results.append({
+                            'ticker': ticker.replace('.NS', ''),
+                            'name': company_name,
+                            'price': current_price,
+                            'change': change_pct
+                        })
+                except:
+                    continue
+            
+            if not results:
+                return f"❌ Unable to fetch data for {sector} sector stocks. Please try again later."
+            
+            # Sort by performance
+            results.sort(key=lambda x: x['change'], reverse=True)
+            
+            # Build response
+            period_text = "this week" if period == "1wk" else "this month" if period == "1mo" else "today"
+            response = f"""📊 **{sector.upper()} SECTOR ANALYSIS**
+Performance for {period_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**🏆 TOP PERFORMERS:**
+
+"""
+            
+            for i, stock in enumerate(results[:3], 1):
+                emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉"
+                arrow = "📈" if stock['change'] > 0 else "📉"
+                response += f"""{emoji} **{stock['name']}** ({stock['ticker']})
+   Price: ₹{stock['price']:,.2f}
+   Change: {stock['change']:+.2f}% {arrow}
+
+"""
+            
+            response += "**📉 OTHER STOCKS:**\n\n"
+            
+            for stock in results[3:]:
+                arrow = "📈" if stock['change'] > 0 else "📉"
+                response += f"""• **{stock['name']}** ({stock['ticker']})
+   ₹{stock['price']:,.2f} | {stock['change']:+.2f}% {arrow}
+
+"""
+            
+            # Add recommendation
+            top_stock = results[0]
+            response += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 **RECOMMENDATION:**
+
+The best performer in {sector.upper()} sector {period_text} is **{top_stock['name']}** with {top_stock['change']:+.2f}% returns.
+
+**Want detailed analysis?**
+Say: "Is {top_stock['ticker']} a good stock?"
+
+**⚠️ Important:**
+• Past performance doesn't guarantee future returns
+• Consider fundamentals, not just price movement
+• Diversify across sectors
+• Consult a SEBI registered advisor
+
+Analysis Date: {datetime.now().strftime('%d %B %Y, %I:%M %p')}"""
+            
+            return response
+            
+        except Exception as e:
+            return f"⚠️ Error analyzing sector: {str(e)}"
+    
     def _run(self, query: str, analysis_type: str) -> str:
         """Main execution method."""
         try:
@@ -288,9 +400,14 @@ Would you like stock recommendations based on your risk profile? Just tell me: "
                 return self._analyze_stock_comprehensive(query)
             elif analysis_type == "mutual_fund_analysis":
                 return self._analyze_mutual_fund(query)
+            elif analysis_type == "sector_analysis":
+                return self._analyze_sector_stocks(query, period="1wk")
+            elif analysis_type == "top_performers":
+                return self._analyze_sector_stocks(query, period="1wk")
             else:
-                return "❌ Invalid analysis type. Use 'stock_analysis' or 'mutual_fund_analysis'"
+                return "❌ Invalid analysis type. Use 'stock_analysis', 'mutual_fund_analysis', 'sector_analysis', or 'top_performers'"
         except Exception as e:
             return f"⚠️ Error in investment analysis: {str(e)}"
 
+# Create instance
 investment_intelligence_tool = InvestmentIntelligenceTool()

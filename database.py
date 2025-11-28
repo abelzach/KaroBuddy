@@ -27,6 +27,7 @@ class DatabaseManager:
             telegram_id INTEGER PRIMARY KEY,
             name TEXT,
             username TEXT,
+            language TEXT DEFAULT 'en',
             income_type TEXT,
             risk_profile TEXT DEFAULT 'medium',
             created_at TEXT
@@ -116,6 +117,19 @@ class DatabaseManager:
         c.execute("""INSERT OR REPLACE INTO users (telegram_id, name, username, created_at)
                      VALUES (?, ?, ?, ?)""",
                   (telegram_id, name, username, datetime.now().isoformat()))
+        self.conn.commit()
+    
+    def get_user_language(self, telegram_id: int) -> str:
+        """Get user's preferred language."""
+        c = self.conn.cursor()
+        c.execute("SELECT language FROM users WHERE telegram_id = ?", (telegram_id,))
+        result = c.fetchone()
+        return result[0] if result and result[0] else "en"
+    
+    def set_user_language(self, telegram_id: int, language: str):
+        """Set user's preferred language."""
+        c = self.conn.cursor()
+        c.execute("UPDATE users SET language = ? WHERE telegram_id = ?", (language, telegram_id))
         self.conn.commit()
     
     def log_transaction(self, telegram_id: int, amount: float, trans_type: str, 

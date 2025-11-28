@@ -66,6 +66,8 @@ def route_intent(state: AgentState) -> AgentState:
         state['intent'] = 'stock_analysis'
     elif 'is' in message and 'good' in message and any(word in message for word in ['mutual fund', 'mf', 'fund']):
         state['intent'] = 'mutual_fund_analysis'
+    elif any(word in message for word in ['sector', 'top performer', 'best stock', 'most profit', 'highest return']) and any(word in message for word in ['analyze', 'show', 'tell', 'which', 'find']):
+        state['intent'] = 'sector_analysis'
     elif any(word in message for word in ['stock', 'share', 'equity', 'nse', 'bse']) and 'check' in message:
         state['intent'] = 'stock'
     elif any(word in message for word in ['suggest', 'recommend', 'investment', 'where to invest', 'should i invest']):
@@ -115,7 +117,8 @@ def call_agent(state: AgentState) -> AgentState:
             
             elif 'allocate' in message_lower or 'add' in message_lower:
                 # Pattern: "allocate AMOUNT to GOAL"
-                match = re.search(r'(?:allocate|add)\s+₹?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s+(?:to|for)\s+(.+)', message, re.IGNORECASE)
+                # More flexible pattern to handle: 10, 10rs, 10₹, 10 rupees, ₹10, etc.
+                match = re.search(r'(?:allocate|add)\s+(?:₹|rs\.?|rupees?)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:rs\.?|₹|rupees?)?\s+(?:to|for|in)\s+(.+)', message, re.IGNORECASE)
                 if match:
                     amount = float(match.group(1).replace(',', ''))
                     goal_name = match.group(2).strip()
@@ -154,6 +157,38 @@ def call_agent(state: AgentState) -> AgentState:
                 result = investment_intelligence_tool._run(fund_name, 'mutual_fund_analysis')
             else:
                 result = "Please specify the mutual fund name.\n\nExample: 'Is HDFC Top 100 a good mutual fund?'"
+            state['response'] = result
+        
+        elif intent == 'sector_analysis':
+            # Extract sector from message
+            sectors = ['gold', 'it', 'banking', 'pharma', 'auto', 'fmcg', 'energy', 'realty', 'metal']
+            sector_found = None
+            
+            for sector in sectors:
+                if sector in message.lower():
+                    sector_found = sector
+                    break
+            
+            if sector_found:
+                result = investment_intelligence_tool._run(sector_found, 'sector_analysis')
+            else:
+                result = """📊 **Sector Analysis**
+
+Please specify a sector to analyze:
+
+Available sectors:
+• Gold - Gold ETFs and gold finance companies
+• IT - Information Technology companies
+• Banking - Banks and financial institutions
+• Pharma - Pharmaceutical companies
+• Auto - Automobile manufacturers
+• FMCG - Fast Moving Consumer Goods
+• Energy - Oil, gas, and power companies
+• Realty - Real estate developers
+• Metal - Steel and metal companies
+
+Example: "Analyze gold sector stocks" or "Show me IT sector top performers" """
+            
             state['response'] = result
         
         elif intent == 'stock':

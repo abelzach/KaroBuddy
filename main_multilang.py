@@ -18,11 +18,7 @@ user_states = {}
 
 def get_user_lang(user_id: int) -> str:
     """Get user's preferred language."""
-    try:
-        return db_manager.get_user_language(user_id)
-    except Exception as e:
-        logger.warning(f"Failed to get user language: {e}. Defaulting to 'en'")
-        return "en"
+    return db_manager.get_user_language(user_id)
 
 def get_main_menu_keyboard(lang: str = "en"):
     """Get the main menu inline keyboard."""
